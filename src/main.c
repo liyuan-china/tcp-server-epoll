@@ -4,8 +4,8 @@
 #include <common.h>
 #include "net/socket_util.h"
 #include "event/epoll_util.h"
-#include "worker/threadpool.h"
-//#include "handler/client_handler.h"
+//#include "worker/threadpool.h"
+#include "handler/client_handler.h"
 
 /**
  * 高并发epoll echo服务器入口
@@ -23,6 +23,23 @@ int main(){
 
     set_nonblocking(listen_fd);
 
+    int num_threads = 0;
+    const char *env_threads = getenv("THREAD_NUM");
+    if (env_threads)
+    {
+        num_threads = atoi(env_threads);
+        if (num_threads <= 0)
+        {
+            num_threads = sysconf(_SC_NPROCESSORS_ONLN);
+            /* code */
+        }
+        
+        /* code */
+    }else{
+        num_threads = sysconf(_SC_NPROCESSORS_ONLN);
+    }
+    
+
     int epfd = create_epoll(listen_fd);
     if (epfd < 0)
     {
@@ -32,8 +49,9 @@ int main(){
     }
     printf("Server listening on port %d (epoll ET mode)\n", PORT);
 
-
-    event_loop(epfd, listen_fd);
+    threadpool_t *pool = threadpool_create(num_threads, 100);
+    event_loop(epfd, listen_fd, pool);
+    threadpool_destroy(pool);
 
     close(listen_fd);
     close(epfd);

@@ -6,6 +6,8 @@
 #include "common.h"
 #include "epoll_util.h"
 #include "handler/client_handler.h"
+#include "worker/threadpool.h"
+
 
 /**
  * 创建epoll实例，并将监听socket加入epoll监听
@@ -40,7 +42,7 @@ int create_epoll(int listenfd){
  * @param listen_fd 监听套接字的文件描述符，用于区分新连接事件和数据事件
  * @return 无返回值(void)
  */
-void event_loop(int epfd, int listen_fd){
+void event_loop(int epfd, int listen_fd, threadpool_t *pool){
     struct epoll_event events[MAX_EVENTS];
     while (1)
     {
@@ -61,7 +63,7 @@ void event_loop(int epfd, int listen_fd){
             {
                 handle_accept(listen_fd, epfd);        
             }else{
-                handle_client_data(event_fd, epfd);
+                handle_client_data(event_fd, epfd, pool);
             }          
         }  
     }

@@ -8,7 +8,57 @@
 #include "common.h"
 #include "net/socket_util.h"
 #include "client_handler.h"
+#include <worker/threadpool.h>
 
+
+/**
+ * 回显结构体
+ */
+typedef struct echo_task_t
+{
+    int fd;
+    char buf[1024*16];
+    ssize_t len;
+    int epfd;
+
+}echo_task_t;
+
+/**
+ * 工作线程执行的回显任务
+ * @param arg   
+ */
+static void echo_worker(void *arg){
+    echo_task_t *task = (echo_task_t *)arg;
+
+    ssize_t written = 0;
+    while (written < task->len)
+    {
+        ssize_t ret = write(task->fd, task->buf + written, task->len - written);
+        if (ret == -1)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                usleep(1000);
+                continue;
+                /* code */
+            }
+            perror("write in worker");
+            break;
+            /* code */
+        }
+        written += ret;
+        /* code */
+    }
+
+    struct epoll_event ev;
+    ev.events = EPOLLIN | EPOLLET;
+    ev.data.fd = task->fd;
+    //close(task->fd);
+    epoll_ctl(task->epfd, EPOLL_CTL_MOD, task->fd, &ev);
+    free(task);
+    
+
+}
 
 /**
  * 处理新连接(ET模式下许循环accept直至EAGAIN)
@@ -52,7 +102,7 @@ void handle_accept(int listenfd, int epfd){
  * @return 无返回值(void)
  */
 //处理客户端数据（echo）
-void handle_client_data(int client_fd, int epfd)
+void handle_client_data(int client_fd, int epfd, threadpool_t *pool)
 {
     char full_buf[1024 * 16];
     ssize_t total = 0;
@@ -91,42 +141,24 @@ void handle_client_data(int client_fd, int epfd)
     }
     if (total > 0)
     {
-        // 数据已完整接收，现在一次性回写
-        printf("Total read = %zd, now echoing back.\n", total);
-        ssize_t total_writer = 0;
-        while (total_writer < total)
+        echo_task_t *task = (echo_task_t *)malloc(sizeof(echo_task_t));
+        if (task == NULL)
         {
-            ssize_t ret = write(client_fd, full_buf + total_writer, total - total_writer);
-            if (ret == -1)
-            {
-                if (errno == EAGAIN || errno == EWOULDBLOCK)
-                {
-                    usleep(1000);
-                    continue;
-                    /* code */
-                }
-                printf("write failed.\n");
-                break;
-                /* code */
-            }
-            total_writer += ret;
+            close(client_fd);
+            epoll_ctl(epfd, EPOLL_CTL_DEL, client_fd, NULL);
+            return;
             /* code */
         }
-        if (total_writer == total)
-        {
-            printf("Echo to %d: %.*s", client_fd, (int)total, full_buf);
-            /* code */
-        }
-        else
-        {
-            printf("Imcomplete echo to %d\n", client_fd);
-        }
-    }
-    if (eof)
-    {
+        task->fd = client_fd;
+        memcpy(task->buf, full_buf, total);
+        task->len = total;
+        task->epfd = epfd;
+
+        threadpool_task(pool, echo_worker, task);
+
+    } else if (eof) {
         printf("Client %d closed.\n", client_fd);
         close(client_fd);
-        epoll_ctl(epfd, EPOLL_CTL_DEL, client_fd, NULL);
-        /* code */
+        epoll_ctl(epfd, EPOLL_CTL_DEL, client_fd, NULL);        
     }
 }
