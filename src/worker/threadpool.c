@@ -1,7 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
-#include <threadpool.h>
+#include <worker/threadpool.h>
+
+/**
+ * @brief 任务队列的节点结构体
+ */
+typedef struct task_node_t
+{
+    task_func_t func;
+    void *arg;
+    struct task_node_t *next;
+    /* data */
+}task_node_t;
 
 /**
  * pthread_create()第三个参数:void *(*__start_routine)(void *)
@@ -112,7 +123,7 @@ threadpool_t *threadpool_create(int count_threads, int queue_size){
     if (pthread_cond_init(&pool->cond_not_full, NULL) != 0)
     {
         pthread_mutex_destroy(&pool->mutex);
-        pthread_mutex_destroy(&pool->cond_not_empty);
+        pthread_cond_destroy(&pool->cond_not_empty);
         free(pool->threads);
         free(pool);
         return NULL;
@@ -146,7 +157,7 @@ threadpool_t *threadpool_create(int count_threads, int queue_size){
     return pool;
 }
 
-/**t
+/**
  * 向任务池投递一个任务 主线程侧
  * @param pool 线程池指针
  * @param func 要执行的任务函数
@@ -230,8 +241,8 @@ void threadpool_destroy(threadpool_t *pool){
     }
     
     pthread_mutex_destroy(&pool->mutex);
-    pthread_mutex_destroy(&pool->cond_not_empty);
-    pthread_mutex_destroy(&pool->cond_not_full);
+    pthread_cond_destroy(&pool->cond_not_empty);
+    pthread_cond_destroy(&pool->cond_not_full);
     free(pool->threads);
     free(pool);
 

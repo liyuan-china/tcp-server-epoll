@@ -24,6 +24,8 @@ int set_nonblocking(int fd){
         /* code */
     if(fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
       printf("fcntl F_SETFL error.\n");
+
+    return flags;
     
 }
 

@@ -2,10 +2,11 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/epoll.h>
+#include <sys/socket.h>
 #include <errno.h>
 #include <string.h>
 #include "common.h"
-#include "socket_util.h"
+#include "net/socket_util.h"
 #include "client_handler.h"
 
 
