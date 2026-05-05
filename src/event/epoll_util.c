@@ -14,7 +14,7 @@
  * @param listenfd 监听套接字
  * @return 成功返回epoll实例文件描述符，失败返回-1
  */
-int create_epoll(int listenfd){
+int create_epoll(int listenfd, client_ctx_t *listen_ctx){
     int epfd = epoll_create1(0);
     if (epfd < 0)
     {
@@ -25,7 +25,7 @@ int create_epoll(int listenfd){
     //将监听加入到epoll
     struct epoll_event epev;
     epev.events = EPOLLIN | EPOLLET;//水平触发
-    epev.data.fd = listenfd;
+    epev.data.ptr = listen_ctx;
     if (epoll_ctl(epfd, EPOLL_CTL_ADD, listenfd, &epev) < 0)
     {
         printf("epoll_ctl add listen error.\n");
@@ -58,12 +58,12 @@ void event_loop(int epfd, int listen_fd, threadpool_t *pool){
         }
         for (int i = 0; i < nfd; i++)
         {
-            int event_fd = events[i].data.fd;
-            if (event_fd == listen_fd)
+            client_ctx_t *ctx = (client_ctx_t *)events[i].data.ptr;
+            if (ctx->fd == listen_fd)
             {
                 handle_accept(listen_fd, epfd);        
             }else{
-                handle_client_data(event_fd, epfd, pool);
+                handle_client_data(ctx, epfd, pool);
             }          
         }  
     }

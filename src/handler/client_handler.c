@@ -9,6 +9,7 @@
 #include "net/socket_util.h"
 #include "client_handler.h"
 #include <worker/threadpool.h>
+#include "event/frame.h"
 
 
 /**
@@ -17,10 +18,11 @@
 typedef struct echo_task_t
 {
     int fd;
-    char buf[1024*16];
+    char *buf;
     ssize_t len;
     int epfd;
 
+    client_ctx_t *ctx;
 }echo_task_t;
 
 /**
@@ -40,25 +42,25 @@ static void echo_worker(void *arg){
             {
                 usleep(1000);
                 continue;
-                /* code */
             }
             perror("write in worker");
             break;
-            /* code */
         }
         written += ret;
-        /* code */
     }
 
-    struct epoll_event ev;
-    ev.events = EPOLLIN | EPOLLET;
-    ev.data.fd = task->fd;
-    //close(task->fd);
-    epoll_ctl(task->epfd, EPOLL_CTL_MOD, task->fd, &ev);
+    // 重新激活 epoll 监听(边缘触发必须)
+    if (task->ctx)
+    {
+        struct epoll_event ev;
+        ev.events = EPOLLIN | EPOLLET;
+        ev.data.ptr = task->ctx;
+        epoll_ctl(task->epfd, EPOLL_CTL_MOD, task->fd, &ev);
+    }
+    free(task->buf);
     free(task);
-    
-
 }
+
 
 /**
  * 处理新连接(ET模式下许循环accept直至EAGAIN)
@@ -76,17 +78,21 @@ void handle_accept(int listenfd, int epfd){
                 break;
             printf("accept failed.\n");
             break;
-            /* code */
         }
+
         set_nonblocking(client_fd);
+        client_ctx_t *ctx = malloc(sizeof(client_ctx_t));
+        ctx->fd = client_fd;
+        ringbuf_init(&ctx->ringbuf, 4096);
+        pthread_mutex_init(&ctx->lock, NULL);
+
         struct epoll_event client_ev;
         client_ev.events = EPOLLIN | EPOLLET;
-        client_ev.data.fd = client_fd;
+        client_ev.data.ptr = ctx;
         if (epoll_ctl(epfd, EPOLL_CTL_ADD, client_fd, &client_ev) < 0)
         {
             printf("epoll_ctl add client failed.\n");
             close(client_fd);
-            /* code */
         }
         else
         {
@@ -102,63 +108,67 @@ void handle_accept(int listenfd, int epfd){
  * @return 无返回值(void)
  */
 //处理客户端数据（echo）
-void handle_client_data(int client_fd, int epfd, threadpool_t *pool)
+void handle_client_data(client_ctx_t *ctx, int epfd, threadpool_t *pool)
 {
-    char full_buf[1024 * 16];
-    ssize_t total = 0;
-    int eof = 0;
+    char tmp[4096];
+
+    // 1.读fd直到EAGAIN
     while (1)
     {
-        ssize_t n = read(client_fd, full_buf + total, sizeof(full_buf) - total);
-        // printf("Received %d bytes from client %d\n", n, client_fd);
-        // printf("read %d bytes\n", n);
-        if (n == -1)
+        ssize_t n = read(ctx->fd, tmp, sizeof(tmp));
+        if (n > 0)
+        {
+            ringbuf_write(&ctx->ringbuf, tmp, n); 
+        }
+        else if (n == 0)
+        {
+            goto cleanup;
+        }
+        else
         {
             if (errno == EAGAIN || errno == EWOULDBLOCK)
             {
                 break;
-                /* code */
             }
-            else
-            {
-                perror("read.");
-                close(client_fd);
-                epoll_ctl(epfd, EPOLL_CTL_DEL, client_fd, NULL);
-                return;
-            }
+
+            goto cleanup;
         }
-        else if (n == 0)
+    }
+
+    // 2.提取完整帧
+    while (1)
+    {
+        char *payload = NULL;
+        uint16_t payload_len = 0;
+
+        int ret = frame_try_extract(&ctx->ringbuf, &payload, &payload_len);
+        if (ret == 0)
         {
-            // 客户端关闭连接
-            eof = 1;
-            break; // 没有更多数据可读
+            printf("Recevied payload:%.*s\n", payload_len, payload);
+            // 成功一帧→提交线程池
+            echo_task_t *task = malloc(sizeof(echo_task_t));
+            task->fd = ctx->fd;
+            task->buf = payload;
+            task->len = payload_len;
+            task->epfd = epfd;
+            threadpool_task(pool, echo_worker, task);
+        }
+        else if (ret == 1)
+        {
+            break;
         }
         else
         {
-            total += n;
-            printf("read %zd bytes, total %zd\n", n, total);
+           goto cleanup;
         }
     }
-    if (total > 0)
-    {
-        echo_task_t *task = (echo_task_t *)malloc(sizeof(echo_task_t));
-        if (task == NULL)
-        {
-            close(client_fd);
-            epoll_ctl(epfd, EPOLL_CTL_DEL, client_fd, NULL);
-            return;
-            /* code */
-        }
-        task->fd = client_fd;
-        memcpy(task->buf, full_buf, total);
-        task->len = total;
-        task->epfd = epfd;
 
-        threadpool_task(pool, echo_worker, task);
+    return;
 
-    } else if (eof) {
-        printf("Client %d closed.\n", client_fd);
-        close(client_fd);
-        epoll_ctl(epfd, EPOLL_CTL_DEL, client_fd, NULL);        
-    }
+cleanup:
+    close(ctx->fd);
+    epoll_ctl(epfd, EPOLL_CTL_DEL, ctx->fd, NULL);
+    ringbuf_destroy(&ctx->ringbuf);
+    pthread_mutex_destroy(&ctx->lock);
+    free(ctx);
 }

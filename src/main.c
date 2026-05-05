@@ -1,10 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <common.h>
 #include "net/socket_util.h"
 #include "event/epoll_util.h"
-//#include "worker/threadpool.h"
 #include "handler/client_handler.h"
 
 /**
@@ -31,21 +31,23 @@ int main(){
         if (num_threads <= 0)
         {
             num_threads = sysconf(_SC_NPROCESSORS_ONLN);
-            /* code */
         }
-        
-        /* code */
     }else{
         num_threads = sysconf(_SC_NPROCESSORS_ONLN);
     }
     
+    // 创建监听 fd 的context
+    client_ctx_t *listen_ctx = malloc(sizeof(client_ctx_t));
+    listen_ctx->fd = listen_fd;
+    memset(&listen_ctx->ringbuf, 0, sizeof(ringbuf_t));
+    memset(&listen_ctx->lock, 0, sizeof(pthread_mutex_t));
 
-    int epfd = create_epoll(listen_fd);
+    int epfd = create_epoll(listen_fd, listen_ctx);
     if (epfd < 0)
     {
+        free(listen_ctx);
         close(listen_fd);
         return 1;
-        /* code */
     }
     printf("Server listening on port %d (epoll ET mode)\n", PORT);
 

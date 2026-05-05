@@ -4,7 +4,7 @@
 #include "worker/threadpool.h"
 
 void handle_accept(int listenfd, int epfd);
-void handle_client_data(int client_fd, int epfd, threadpool_t *pool);
+void handle_client_data(client_ctx_t *ctx, int epfd, threadpool_t *pool);
 
 
 #endif
